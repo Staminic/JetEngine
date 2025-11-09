@@ -1,0 +1,156 @@
+if ( ! function_exists( 'jet_engine' ) ) {
+	return;
+}
+
+class Jet_Smart_Filters_By_Related_Taxonomy {
+	public $key	= '__related_items_by_taxonomy';
+	public $label	= 'Filter related items by Taxonomies';
+	
+	public function __construct () {
+		add_filter( 'jet-smart-filters/query/final-query', [ $this, 'change_query' ], -99 );
+		add_action( 'jet-smart-filters/admin/register-dynamic-query', [ $this, 'helper_dynamic_query' ] );
+	}
+
+	public function change_query ( $query ) {
+		if ( isset( $query['meta_query'] ) ) {
+			foreach( $query['meta_query'] as $item => $value) {
+				if ( false === strpos( $value['key'], $this->key ) ) {
+					continue;
+				}
+
+				$qv = str_replace( $this->key . '__', '', $value['key'] );
+
+				$taxonomy 	= explode( '__', $qv )[0];
+				$rel_type 	= explode( '__', $qv )[1];
+				$rel_id 	= explode( '__', $qv )[2];
+
+				$term_ids = $value['value'];
+
+				$args = array(
+					'tax_query' => array(
+						array(
+							'taxonomy' => $taxonomy,
+							'field'    => 'term_id',
+							'terms'    => $term_ids,
+						),
+					),
+					'fields' => 'ids',
+					'posts_per_page' => -1,
+				);
+
+				$post_query = new WP_Query($args);
+
+				if ( $post_query->have_posts() ) {
+					$post_ids = $post_query->posts;
+				} else {
+					$post_ids = '';
+				}
+
+				$query['meta_query'][$item]['value'] = $post_ids;
+				$query['meta_query'][$item]['key'] = "{$rel_type}*{$rel_id}";
+			}
+		}
+
+		return $query;
+	}
+
+	public function helper_dynamic_query( $dynamic_query_manager ){
+		$taxonomy_slugs = $this->get_taxonomy_list();
+		$relation_types = $this->get_relation_types();
+		$relations_options = $this->get_relation_options();
+
+		if ( ! $taxonomy_slugs || ! $relations_options ) {
+			return;
+		}
+
+		$relation_dynamic_query_item = new class( $this->key, $this->label, $taxonomy_slugs, $relation_types, $relations_options ) {
+			public function __construct( $name, $label, $tax_slugs, $relation_types, $options ) {
+				$this->name 			= $name;
+				$this->tag				= $label;
+				$this->tax_slugs		= $tax_slugs;
+				$this->relations_type   = $relation_types;
+				$this->options			= $options;
+			}
+
+			public function get_name() {
+				return $this->name;
+			}
+
+			public function get_label() {
+				return $this->tag;
+			}
+
+			public function get_extra_args() {
+				return [
+					'taxonomy' => [
+						'type'        => 'select',
+						'title'       => __( 'Taxonomy', 'jet-smart-filters' ),
+						'placeholder' => __( 'Select taxonomy...', 'jet-smart-filters' ),
+						'options'     => $this->tax_slugs,
+					],
+					'rel_type' => [
+						'type'        => 'select',
+						'title'       => __( 'Relation Type', 'jet-smart-filters' ),
+						'placeholder' => __( 'Select type...', 'jet-smart-filters' ),
+						'options'     => $this->relations_type,
+					],
+					'relation' => [
+						'type'        => 'select',
+						'title'       => __( 'Relation', 'jet-smart-filters' ),
+						'placeholder' => __( 'Select relation...', 'jet-smart-filters' ),
+						'options'     => $this->options,
+					],
+				];
+			}
+
+			public function get_delimiter() {
+				return '__';
+			}
+		};
+
+		$dynamic_query_manager->register_item( $relation_dynamic_query_item );
+	}
+	
+	private function get_taxonomy_list() {
+		$taxonomy_slugs = get_taxonomies();
+		
+		if( empty( $taxonomy_slugs ) ){
+			return false;
+		}
+
+		$taxonomies = [];
+		foreach( $taxonomy_slugs as $tax_slug ){
+			$taxonomy = get_taxonomy( $tax_slug );
+
+			if( $taxonomy ){
+				$taxonomies[$tax_slug] = $taxonomy->labels->name;
+			}
+		}
+
+		return $taxonomies;
+	}
+
+	private function get_relation_types() {
+		return [
+			'related_children' => __( 'filters children items list by parents IDs', 'jet-smart-filters' ),
+			'related_parents'  => __( 'filters parents items list by children IDs', 'jet-smart-filters' )
+		];
+	}
+	
+	private function get_relation_options() {
+		$relations = jet_engine()->relations->get_active_relations();
+
+		if( ! $relations ){
+			return false;
+		}
+
+		$relations_options = [];
+		foreach ( $relations as $relation_item ) {
+			$relations_options[ $relation_item->get_id() ] = $relation_item->get_relation_name();
+		}
+
+		return $relations_options;
+	}
+}
+
+new Jet_Smart_Filters_By_Related_Taxonomy();
